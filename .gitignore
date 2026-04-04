@@ -1,0 +1,20 @@
+# Separate local clone / other GitHub project (do not nest repos)
+Multi-Agent-VC-Research/
+
+# Secrets — never commit real keys
+.streamlit/secrets.toml
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+venv/
+.venv/
+env/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
