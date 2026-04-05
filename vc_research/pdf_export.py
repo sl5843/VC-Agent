@@ -212,9 +212,18 @@ def _write_references(pdf: FPDF, urls: List[str]) -> None:
     pdf.set_font("helvetica", "B", 9)
     pdf.set_text_color(*_COLOR_HEADING)
     pdf.set_x(pdf.l_margin)
-    pdf.cell(pdf.epw, 5, "Sources")
+    # Must advance Y after the heading cell; default new_y=TOP leaves cursor on
+    # the same line and multi_cell draws on top of "Sources".
+    pdf.cell(
+        pdf.epw,
+        6,
+        "Sources",
+        new_x=XPos.LMARGIN,
+        new_y=YPos.NEXT,
+        align=Align.L,
+    )
     pdf.set_text_color(0, 0, 0)
-    pdf.ln(0.5)
+    pdf.ln(1.5)
     pdf.set_font("helvetica", "", 8)
     pdf.set_text_color(*_COLOR_SOURCE)
     indent = 5.0
