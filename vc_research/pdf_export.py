@@ -2,23 +2,63 @@
 
 from __future__ import annotations
 
+import re
 import tempfile
 import textwrap
 from io import BytesIO
-from typing import Dict, Optional
+from typing import Dict, List, Optional, Tuple
 
 from fpdf import FPDF
-from fpdf.enums import XPos, YPos
+from fpdf.enums import Align, XPos, YPos
 
-from vc_research.models.schemas import SynthesisOutput
+from vc_research.models.schemas import MemoSection, SynthesisOutput
+
+_MD_LINK = re.compile(r"\[([^\]]*)\]\((https?://[^)]+)\)", re.I)
+_URL_BRACKET = re.compile(r"\[(https?://[^\]\s]+)\]", re.I)
 
 
 def _latin1_safe(text: str) -> str:
     return text.encode("latin-1", "replace").decode("latin-1")
 
 
+def _normalize_line_spaces(text: str) -> str:
+    """Single spaces inside lines; keep paragraph breaks."""
+    return "\n".join(re.sub(r" +", " ", ln.strip()) for ln in text.split("\n"))
+
+
+def _extract_inline_urls(text: str) -> Tuple[str, List[str]]:
+    """Turn [url] and [label](url) into [1], [2]; collect URLs in order."""
+    urls: List[str] = []
+
+    def md_sub(m: re.Match) -> str:
+        urls.append(m.group(2))
+        return f"[{len(urls)}]"
+
+    t = _MD_LINK.sub(md_sub, text)
+
+    def br_sub(m: re.Match) -> str:
+        urls.append(m.group(1))
+        return f"[{len(urls)}]"
+
+    t = _URL_BRACKET.sub(br_sub, t)
+    return _normalize_line_spaces(t), urls
+
+
+def _prose_and_refs(body: str, model_footnotes: List[str]) -> Tuple[str, List[str]]:
+    """Prefer model footnote list; still strip any raw URLs from prose."""
+    cleaned, auto = _extract_inline_urls(body)
+    refs = model_footnotes if model_footnotes else auto
+    return cleaned, refs
+
+
+def format_memo_prose(
+    body: str, model_footnotes: Optional[List[str]] = None
+) -> Tuple[str, List[str]]:
+    """Public helper for Streamlit: clean prose + ordered source URLs."""
+    return _prose_and_refs(body, model_footnotes or [])
+
+
 def _soft_wrap(text: str, width: int = 92) -> str:
-    """Break very long tokens (URLs) so multi_cell always has room to wrap."""
     parts: list[str] = []
     for word in text.split():
         if len(word) > width:
@@ -29,11 +69,6 @@ def _soft_wrap(text: str, width: int = 92) -> str:
 
 
 def _multicell_block(pdf: FPDF, line_height: float, text: str) -> None:
-    """
-    Write wrapped text using full page width. Resets x after each block so
-    consecutive multi_cell calls do not see 0 remaining width (fpdf2 error:
-    'Not enough horizontal space to render a single character').
-    """
     txt = _latin1_safe(_soft_wrap(text.strip()))
     if not txt:
         return
@@ -44,13 +79,53 @@ def _multicell_block(pdf: FPDF, line_height: float, text: str) -> None:
         txt,
         new_x=XPos.LMARGIN,
         new_y=YPos.NEXT,
+        align=Align.L,
     )
 
 
 def _cell_full(pdf: FPDF, h: float, text: str) -> None:
     pdf.set_x(pdf.l_margin)
     t = _latin1_safe(text)
-    pdf.cell(pdf.epw, h, t, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.cell(
+        pdf.epw,
+        h,
+        t,
+        new_x=XPos.LMARGIN,
+        new_y=YPos.NEXT,
+        align=Align.L,
+    )
+
+
+def _write_references(pdf: FPDF, heading: str, urls: List[str]) -> None:
+    if not urls:
+        return
+    pdf.ln(1)
+    pdf.set_font("helvetica", "B", 9)
+    _cell_full(pdf, 5, heading)
+    pdf.set_font("helvetica", "", 8)
+    for i, u in enumerate(urls, start=1):
+        _multicell_block(pdf, 3.8, f"[{i}] {u}")
+
+
+def _section_block(
+    pdf: FPDF,
+    sec: MemoSection,
+) -> None:
+    pdf.set_font("helvetica", "B", 11)
+    _cell_full(
+        pdf,
+        7,
+        f"{sec.title} (confidence {sec.confidence:.0%})",
+    )
+    pdf.set_font("helvetica", "", 10)
+    body, refs = _prose_and_refs(
+        sec.body_markdown, getattr(sec, "footnotes", None) or []
+    )
+    for line in body.split("\n"):
+        if line.strip():
+            _multicell_block(pdf, 5, line)
+    _write_references(pdf, "Sources", refs)
+    pdf.ln(2)
 
 
 def _build_fpdf(
@@ -59,62 +134,60 @@ def _build_fpdf(
     dimension_scores: Optional[Dict[str, int]] = None,
 ) -> FPDF:
     pdf = FPDF()
-    pdf.set_margins(left=12, top=12, right=12)
+    pdf.set_margins(left=14, top=14, right=14)
     pdf.add_page()
-    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.set_auto_page_break(auto=True, margin=16)
 
-    pdf.set_font("helvetica", "B", 16)
-    _cell_full(pdf, 10, f"Investment memo: {startup_name}")
-    pdf.set_font("helvetica", "I", 9)
+    pdf.set_font("helvetica", "B", 15)
+    _cell_full(pdf, 9, f"Investment memo — {startup_name}")
+    pdf.set_draw_color(180, 180, 180)
+    y = pdf.get_y()
+    pdf.line(pdf.l_margin, y, pdf.w - pdf.r_margin, y)
+    pdf.ln(3)
+
+    pdf.set_font("helvetica", "", 9)
+    pdf.set_text_color(80, 80, 80)
     _cell_full(
         pdf,
-        6,
-        "VC Research Agent | Multi-agent pipeline (search, analysis, fact-check, synthesis)",
+        5,
+        "Confidential draft | Search, analysis, fact-check, synthesis pipeline",
     )
+    pdf.set_text_color(0, 0, 0)
     pdf.ln(2)
 
     if dimension_scores:
-        pdf.set_font("helvetica", "B", 12)
-        _cell_full(pdf, 8, "Dimension scores (0-10)")
+        pdf.set_font("helvetica", "B", 11)
+        _cell_full(pdf, 7, "Dimension scores (0–10)")
         pdf.set_font("helvetica", "", 10)
         for k, v in dimension_scores.items():
-            _cell_full(pdf, 6, f"{k}: {v}/10")
+            _cell_full(pdf, 5.5, f"{k.replace('_', ' ').title()}: {v}/10")
         pdf.ln(2)
 
+    es_fn = getattr(synthesis, "executive_summary_footnotes", None) or []
     pdf.set_font("helvetica", "B", 12)
-    _cell_full(pdf, 8, "Executive summary")
-    pdf.set_font("helvetica", "", 9)
-    for line in (synthesis.executive_summary or "").split("\n"):
+    _cell_full(pdf, 7, "Executive summary")
+    pdf.set_font("helvetica", "", 10)
+    es_body, es_refs = _prose_and_refs(synthesis.executive_summary or "", es_fn)
+    for line in es_body.split("\n"):
         if line.strip():
-            _multicell_block(pdf, 5, line)
-    pdf.ln(2)
+            _multicell_block(pdf, 5.2, line)
+    _write_references(pdf, "Sources", es_refs)
+    pdf.ln(3)
 
     for sec in synthesis.sections:
-        pdf.set_font("helvetica", "B", 11)
-        _cell_full(
-            pdf,
-            7,
-            f"{sec.title} (confidence {sec.confidence:.0%})",
-        )
-        pdf.set_font("helvetica", "", 9)
-        for line in sec.body_markdown.split("\n"):
-            if line.strip():
-                _multicell_block(pdf, 5, line)
-        if sec.key_citations:
-            pdf.set_font("helvetica", "I", 8)
-            _cell_full(pdf, 5, "Key citations:")
-            for url in sec.key_citations[:20]:
-                _multicell_block(pdf, 4, url)
-        pdf.ln(2)
+        _section_block(pdf, sec)
 
-    pdf.set_font("helvetica", "B", 12)
-    _cell_full(pdf, 8, "Recommendation")
+    pdf.set_font("helvetica", "B", 11)
+    _cell_full(pdf, 7, "Recommendation")
     pdf.set_font("helvetica", "", 10)
-    _multicell_block(
-        pdf,
-        5,
-        f"{synthesis.recommendation} (confidence {synthesis.recommendation_confidence:.0%})",
+    rec = synthesis.recommendation or ""
+    rec_clean, rec_refs = _prose_and_refs(
+        f"{rec} (confidence {synthesis.recommendation_confidence:.0%})", []
     )
+    for line in rec_clean.split("\n"):
+        if line.strip():
+            _multicell_block(pdf, 5, line)
+    _write_references(pdf, "Sources", rec_refs)
     return pdf
 
 

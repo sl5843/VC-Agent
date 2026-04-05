@@ -16,7 +16,7 @@ from vc_research.charts import (
     create_market_map,
 )
 from vc_research.models.schemas import PipelineState, VerifiedClaim
-from vc_research.pdf_export import build_memo_pdf_bytes
+from vc_research.pdf_export import build_memo_pdf_bytes, format_memo_prose
 from vc_research.pipeline import run_compare_bundle, run_pipeline
 
 st.set_page_config(
@@ -271,19 +271,37 @@ def _render_single_company_results(state: PipelineState) -> None:
                 "Recommendation confidence",
                 f"{syn.recommendation_confidence:.0%}",
             )
-            st.markdown(f"### Recommendation\n{syn.recommendation}")
+            st.markdown("### Recommendation")
+            rec_txt, rec_refs = format_memo_prose(
+                syn.recommendation or "",
+                [],
+            )
+            st.markdown(rec_txt or "_N/A_")
+            if rec_refs:
+                with st.expander("Recommendation — sources"):
+                    for i, u in enumerate(rec_refs, start=1):
+                        st.markdown(f"{i}. [{u}]({u})")
+
             st.markdown("### Executive summary")
-            st.markdown(syn.executive_summary or "_N/A_")
+            es_f = getattr(syn, "executive_summary_footnotes", None) or []
+            es_prose, es_refs = format_memo_prose(syn.executive_summary or "", es_f)
+            st.markdown(es_prose or "_N/A_")
+            if es_refs:
+                with st.expander("Executive summary — sources"):
+                    for i, u in enumerate(es_refs, start=1):
+                        st.markdown(f"{i}. [{u}]({u})")
+
             for sec in syn.sections:
                 st.markdown(
                     f"### {sec.title} _(section confidence {sec.confidence:.0%})_"
                 )
-                st.markdown(sec.body_markdown)
-                if sec.key_citations:
-                    st.markdown(
-                        "**Citations:** "
-                        + " · ".join(f"[link]({u})" for u in sec.key_citations)
-                    )
+                sf = getattr(sec, "footnotes", None) or []
+                body_prose, sec_refs = format_memo_prose(sec.body_markdown, sf)
+                st.markdown(body_prose or "_N/A_")
+                if sec_refs:
+                    with st.expander(f"{sec.title} — sources"):
+                        for i, u in enumerate(sec_refs, start=1):
+                            st.markdown(f"{i}. [{u}]({u})")
         else:
             st.info("Synthesis not available (pipeline may have failed earlier).")
 
@@ -316,11 +334,20 @@ def _render_compare_results(payload: Dict[str, Any]) -> None:
                 continue
             with st.expander(f"**{ps.company_name}** — detail", expanded=False):
                 if ps.synthesis:
-                    st.markdown(f"**Recommendation:** {ps.synthesis.recommendation}")
+                    syn = ps.synthesis
+                    r_prose, r_ref = format_memo_prose(syn.recommendation or "", [])
+                    st.markdown(f"**Recommendation:** {r_prose}")
                     st.caption(
-                        f"Confidence: {ps.synthesis.recommendation_confidence:.0%}"
+                        f"Confidence: {syn.recommendation_confidence:.0%}"
                     )
-                    st.markdown(ps.synthesis.executive_summary or "_No summary_")
+                    es_f = getattr(syn, "executive_summary_footnotes", None) or []
+                    es_p, es_r = format_memo_prose(
+                        syn.executive_summary or "", es_f
+                    )
+                    st.markdown(es_p or "_No summary_")
+                    if es_r:
+                        for i, u in enumerate(es_r, start=1):
+                            st.caption(f"[{i}] {u}")
                 else:
                     st.write("_No synthesis (pipeline may have stopped early)._")
                 c1, c2 = st.columns(2)

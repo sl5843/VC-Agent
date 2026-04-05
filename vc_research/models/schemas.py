@@ -97,6 +97,8 @@ class MemoSection:
     body_markdown: str
     confidence: float
     key_citations: List[str]
+    # Numbered sources for [1], [2] in body (same order as markers)
+    footnotes: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -106,6 +108,8 @@ class SynthesisOutput:
     recommendation: str
     recommendation_confidence: float
     executive_summary: str
+    # URLs for [1], [2] in executive_summary (same order)
+    executive_summary_footnotes: List[str] = field(default_factory=list)
 
 
 @dataclass
