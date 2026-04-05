@@ -41,4 +41,12 @@ def get_serper_key() -> str:
 
 
 def get_gemini_model_name() -> str:
+    """Model id for google-generativeai, e.g. gemini-2.5-flash, gemini-2.5-flash-lite."""
+    try:
+        import streamlit as st
+
+        if "GEMINI_MODEL" in st.secrets:
+            return _normalize_secret(str(st.secrets["GEMINI_MODEL"]))
+    except Exception:
+        pass
     return os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")

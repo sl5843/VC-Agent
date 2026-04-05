@@ -3,23 +3,26 @@
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import Any, Optional
 
 import google.generativeai as genai
 
 from vc_research.config import get_gemini_key, get_gemini_model_name
 
 _model = None
+_model_id: Optional[str] = None
 
 # Per-request cap so the UI cannot hang forever on a stuck HTTP call (seconds).
 _GEMINI_TIMEOUT = int(os.environ.get("GEMINI_REQUEST_TIMEOUT", "120"))
 
 
 def get_model():
-    global _model
-    if _model is None:
+    global _model, _model_id
+    name = get_gemini_model_name()
+    if _model is None or _model_id != name:
         genai.configure(api_key=get_gemini_key())
-        _model = genai.GenerativeModel(get_gemini_model_name())
+        _model = genai.GenerativeModel(name)
+        _model_id = name
     return _model
 
 
