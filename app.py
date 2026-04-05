@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import base64
 import pickle
+import zlib
 from typing import Any, Callable, Dict, List, Optional
 
 import streamlit as st
@@ -55,16 +56,21 @@ def _clear_pdf_keys() -> None:
 
 
 def _persist_pipeline_state(state: PipelineState) -> None:
-    st.session_state[SS_SINGLE_PICKLE_B64] = base64.b64encode(
-        pickle.dumps(state, protocol=pickle.HIGHEST_PROTOCOL)
-    ).decode("ascii")
+    blob = pickle.dumps(state, protocol=pickle.HIGHEST_PROTOCOL)
+    comp = zlib.compress(blob, level=7)
+    st.session_state[SS_SINGLE_PICKLE_B64] = base64.b64encode(comp).decode("ascii")
 
 
 def _load_pipeline_state() -> Optional[PipelineState]:
     raw = st.session_state.get(SS_SINGLE_PICKLE_B64)
     if raw:
         try:
-            return pickle.loads(base64.b64decode(raw.encode("ascii")))
+            decoded = base64.b64decode(raw.encode("ascii"))
+            try:
+                data = zlib.decompress(decoded)
+            except zlib.error:
+                data = decoded
+            return pickle.loads(data)
         except Exception:
             st.session_state.pop(SS_SINGLE_PICKLE_B64, None)
     legacy = st.session_state.pop(SS_SINGLE_STATE_LEGACY, None)
