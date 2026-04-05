@@ -17,15 +17,46 @@ DIMENSION_LABELS = [
 ]
 
 
+def _radial_r_values(
+    dimension_scores: Dict[str, Optional[int]], keys: List[str]
+) -> List[float]:
+    out: List[float] = []
+    for k in keys:
+        v = dimension_scores.get(k)
+        if v is None:
+            out.append(float("nan"))
+        else:
+            out.append(float(max(0, min(10, int(v)))))
+    return out
+
+
 def create_dimension_radar(
-    dimension_scores: Dict[str, int], company_name: str
+    dimension_scores: Dict[str, Optional[int]], company_name: str
 ) -> go.Figure:
     keys = [k for k, _ in DIMENSION_LABELS]
     labels = [lbl for _, lbl in DIMENSION_LABELS]
-    values = [int(dimension_scores.get(k, 0) or 0) for k in keys]
-    values = [max(0, min(10, v)) for v in values]
+    values = _radial_r_values(dimension_scores, keys)
+    if all(math.isnan(v) for v in values):
+        fig = go.Figure()
+        fig.update_layout(
+            title=f"{company_name} — dimension scores",
+            annotations=[
+                dict(
+                    text="No numeric scores: sources did not support a 0-10 rating on any dimension.",
+                    xref="paper",
+                    yref="paper",
+                    x=0.5,
+                    y=0.5,
+                    showarrow=False,
+                    font=dict(size=14, color="#555"),
+                )
+            ],
+            height=420,
+        )
+        return fig
     values_closed = values + [values[0]]
     labels_closed = labels + [labels[0]]
+    has_missing = any(math.isnan(v) for v in values)
 
     fig = go.Figure(
         data=go.Scatterpolar(
@@ -34,15 +65,32 @@ def create_dimension_radar(
             fill="toself",
             line_color="#667eea",
             fillcolor="rgba(102, 126, 234, 0.35)",
+            connectgaps=False,
             name=company_name,
         )
     )
-    fig.update_layout(
+    layout_kw: Dict[str, Any] = dict(
         polar=dict(radialaxis=dict(visible=True, range=[0, 10])),
         showlegend=False,
         title=f"{company_name} — dimension scores",
         height=420,
     )
+    if has_missing:
+        layout_kw["margin"] = dict(l=48, r=48, t=56, b=72)
+        layout_kw["annotations"] = [
+            dict(
+                text="Gaps indicate dimensions that were not scored — insufficient evidence in retrieved sources (not a score of zero).",
+                xref="paper",
+                yref="paper",
+                x=0.5,
+                y=-0.12,
+                yanchor="top",
+                showarrow=False,
+                font=dict(size=11, color="#555"),
+                align="center",
+            )
+        ]
+    fig.update_layout(**layout_kw)
     return fig
 
 
@@ -114,17 +162,19 @@ def create_market_map(
 
 
 def create_comparison_radar(
-    all_scores: Dict[str, Dict[str, int]],
+    all_scores: Dict[str, Dict[str, Optional[int]]],
 ) -> go.Figure:
     palette = ["#667eea", "#f093fb", "#4facfe", "#43e97b", "#fa709a"]
     fig = go.Figure()
     keys = [k for k, _ in DIMENSION_LABELS]
     labels = [lbl for _, lbl in DIMENSION_LABELS]
     labels_closed = labels + [labels[0]]
+    any_missing = False
 
     for i, (startup, scores) in enumerate(all_scores.items()):
-        values = [int(scores.get(k, 0) or 0) for k in keys]
-        values = [max(0, min(10, v)) for v in values]
+        values = _radial_r_values(scores, keys)
+        if any(math.isnan(v) for v in values):
+            any_missing = True
         values_closed = values + [values[0]]
         color = palette[i % len(palette)]
         fig.add_trace(
@@ -135,12 +185,29 @@ def create_comparison_radar(
                 name=startup,
                 line_color=color,
                 opacity=0.35,
+                connectgaps=False,
             )
         )
 
-    fig.update_layout(
+    layout_kw: Dict[str, Any] = dict(
         polar=dict(radialaxis=dict(visible=True, range=[0, 10])),
         title="Startup comparison — dimension scores",
         height=500,
     )
+    if any_missing:
+        layout_kw["margin"] = dict(l=48, r=48, t=56, b=72)
+        layout_kw["annotations"] = [
+            dict(
+                text="Polygon gaps: that startup had no defensible score for that dimension given available sources.",
+                xref="paper",
+                yref="paper",
+                x=0.5,
+                y=-0.12,
+                yanchor="top",
+                showarrow=False,
+                font=dict(size=11, color="#555"),
+                align="center",
+            )
+        ]
+    fig.update_layout(**layout_kw)
     return fig

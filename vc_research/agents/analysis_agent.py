@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from vc_research.llm import generate_json_prompt
 from vc_research.models.schemas import (
@@ -59,12 +59,22 @@ def _parse_analysis_json(
         competitors = []
 
     scores_raw = payload.get("dimension_scores") or {}
-    dimension_scores: Dict[str, int] = {}
+    if not isinstance(scores_raw, dict):
+        scores_raw = {}
+    dimension_scores: Dict[str, Optional[int]] = {}
     for d in DIMENSIONS:
+        if d not in scores_raw:
+            dimension_scores[d] = None
+            continue
+        raw_val = scores_raw[d]
+        if raw_val is None:
+            dimension_scores[d] = None
+            continue
         try:
-            v = int(scores_raw.get(d, 0))
+            v = int(raw_val)
         except (TypeError, ValueError):
-            v = 0
+            dimension_scores[d] = None
+            continue
         dimension_scores[d] = max(0, min(10, v))
 
     return AnalysisOutput(
@@ -120,12 +130,12 @@ Return a single JSON object with this exact shape:
     {{ "name": "string", "description": "string", "threat_level": "High|Medium|Low", "source_ids": ["src_0"] }}
   ],
   "dimension_scores": {{
-    "market_size": 0-10,
-    "traction": 0-10,
-    "team": 0-10,
-    "competition": 0-10,
-    "business_model": 0-10,
-    "risk": 0-10
+    "market_size": <integer 0-10 or null if not assessable from sources>,
+    "traction": <0-10 or null>,
+    "team": <0-10 or null>,
+    "competition": <0-10 or null>,
+    "business_model": <0-10 or null>,
+    "risk": <0-10 or null>
   }}
 }}
 
@@ -133,6 +143,7 @@ Rules:
 - Every claim string must be supported by at least one source_id from SOURCES.
 - Prefer 2-5 substantive claims per dimension; use fewer if sources are thin.
 - For risk scores, higher means more risk (worse).
+- For dimension_scores: use an integer 0-10 only when snippets support a defensible rating. If sources lack evidence for a dimension (e.g. team background not covered), set that key to null or omit it — do NOT use 0 as a placeholder for unknown.
 - Competitors must also include source_ids when possible.
 - Do not invent URLs or facts not implied by snippets.
 """

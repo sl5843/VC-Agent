@@ -72,7 +72,8 @@ class AnalysisOutput:
     company_name: str
     dimensions: Dict[str, DimensionInsights]
     competitors: List[Dict[str, Any]]
-    dimension_scores: Dict[str, int]
+    # None = not scored (omit in model JSON or null); never use 0 as a placeholder for unknown.
+    dimension_scores: Dict[str, Optional[int]]
 
 
 @dataclass

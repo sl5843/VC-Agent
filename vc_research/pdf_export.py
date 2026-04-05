@@ -180,8 +180,18 @@ def _section_title(pdf: FPDF, title: str, meta: str = "") -> None:
     _hrule(pdf)
 
 
-def _scores_table(pdf: FPDF, dimension_scores: Dict[str, int]) -> None:
-    _section_title(pdf, "Dimension scores", "Scale 0-10")
+def _score_cell_text(v: Optional[int]) -> str:
+    if v is None:
+        return " Not assessable (sources)"
+    return f" {v}/10"
+
+
+def _scores_table(pdf: FPDF, dimension_scores: Dict[str, Optional[int]]) -> None:
+    _section_title(
+        pdf,
+        "Dimension scores",
+        "Scale 0-10 where evidence supports a rating; otherwise not scored",
+    )
     col_a = pdf.epw * 0.62
     col_b = pdf.epw - col_a
     pdf.set_draw_color(*_COLOR_RULE)
@@ -199,7 +209,15 @@ def _scores_table(pdf: FPDF, dimension_scores: Dict[str, int]) -> None:
             pdf.set_fill_color(255, 255, 255)
         label = k.replace("_", " ").title()
         pdf.cell(col_a, 6.5, f" {label}", border="LR", fill=fill)
-        pdf.cell(col_b, 6.5, f" {v}", border="LR", fill=fill, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.cell(
+            col_b,
+            6.5,
+            _pdf_ascii(_score_cell_text(v).strip()),
+            border="LR",
+            fill=fill,
+            new_x=XPos.LMARGIN,
+            new_y=YPos.NEXT,
+        )
     pdf.set_fill_color(255, 255, 255)
     pdf.cell(pdf.epw, 0, "", border="T", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.ln(2)
@@ -262,7 +280,7 @@ def _section_block(pdf: FPDF, sec: MemoSection) -> None:
 def _build_fpdf(
     startup_name: str,
     synthesis: SynthesisOutput,
-    dimension_scores: Optional[Dict[str, int]] = None,
+    dimension_scores: Optional[Dict[str, Optional[int]]] = None,
 ) -> FPDF:
     pdf = _MemoPDF()
     pdf.set_margins(left=14, top=14, right=14)
@@ -302,7 +320,7 @@ def _build_fpdf(
 def build_memo_pdf_bytes(
     startup_name: str,
     synthesis: SynthesisOutput,
-    dimension_scores: Optional[Dict[str, int]] = None,
+    dimension_scores: Optional[Dict[str, Optional[int]]] = None,
 ) -> bytes:
     pdf = _build_fpdf(startup_name, synthesis, dimension_scores)
     buf = BytesIO()
@@ -314,7 +332,7 @@ def build_memo_pdf_bytes(
 def export_memo_pdf(
     startup_name: str,
     synthesis: SynthesisOutput,
-    dimension_scores: Optional[Dict[str, int]] = None,
+    dimension_scores: Optional[Dict[str, Optional[int]]] = None,
 ) -> str:
     pdf = _build_fpdf(startup_name, synthesis, dimension_scores)
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")

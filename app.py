@@ -224,7 +224,7 @@ def _render_single_company_results(state: PipelineState) -> None:
     )
 
     with tab_a:
-        if state.analysis and state.analysis.dimension_scores:
+        if state.analysis:
             st.subheader("Dimension radar")
             fig = create_dimension_radar(
                 state.analysis.dimension_scores, state.company_name
@@ -320,7 +320,7 @@ def _render_compare_results(payload: Dict[str, Any]) -> None:
 
     all_scores = {}
     for ps in states:
-        if ps.analysis and ps.analysis.dimension_scores:
+        if ps.analysis:
             all_scores[ps.company_name] = ps.analysis.dimension_scores
 
     if len(all_scores) >= 2:
@@ -361,7 +361,12 @@ def _render_compare_results(payload: Dict[str, Any]) -> None:
                     if ps.analysis.dimension_scores:
                         st.markdown("**Scores (radar dimensions)**")
                         for k, v in ps.analysis.dimension_scores.items():
-                            st.write(f"- {k}: {v}/10")
+                            if v is None:
+                                st.write(
+                                    f"- {k}: _Not assessable from retrieved sources_"
+                                )
+                            else:
+                                st.write(f"- {k}: {v}/10")
                 with c2:
                     if ps.analysis.competitors:
                         st.markdown("**Competitors (from analysis)**")
