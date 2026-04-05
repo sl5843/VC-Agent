@@ -16,7 +16,11 @@ from vc_research.charts import (
     create_market_map,
 )
 from vc_research.models.schemas import PipelineState, VerifiedClaim
-from vc_research.pdf_export import build_memo_pdf_bytes, format_memo_prose
+from vc_research.pdf_export import (
+    build_memo_pdf_bytes,
+    format_memo_prose,
+    streamlit_prose_display,
+)
 from vc_research.pipeline import run_compare_bundle, run_pipeline
 
 st.set_page_config(
@@ -276,7 +280,7 @@ def _render_single_company_results(state: PipelineState) -> None:
                 syn.recommendation or "",
                 [],
             )
-            st.markdown(rec_txt or "_N/A_")
+            st.markdown(streamlit_prose_display(rec_txt) or "_N/A_")
             if rec_refs:
                 with st.expander("Recommendation — sources"):
                     for i, u in enumerate(rec_refs, start=1):
@@ -285,7 +289,7 @@ def _render_single_company_results(state: PipelineState) -> None:
             st.markdown("### Executive summary")
             es_f = getattr(syn, "executive_summary_footnotes", None) or []
             es_prose, es_refs = format_memo_prose(syn.executive_summary or "", es_f)
-            st.markdown(es_prose or "_N/A_")
+            st.markdown(streamlit_prose_display(es_prose) or "_N/A_")
             if es_refs:
                 with st.expander("Executive summary — sources"):
                     for i, u in enumerate(es_refs, start=1):
@@ -297,7 +301,7 @@ def _render_single_company_results(state: PipelineState) -> None:
                 )
                 sf = getattr(sec, "footnotes", None) or []
                 body_prose, sec_refs = format_memo_prose(sec.body_markdown, sf)
-                st.markdown(body_prose or "_N/A_")
+                st.markdown(streamlit_prose_display(body_prose) or "_N/A_")
                 if sec_refs:
                     with st.expander(f"{sec.title} — sources"):
                         for i, u in enumerate(sec_refs, start=1):
@@ -336,7 +340,9 @@ def _render_compare_results(payload: Dict[str, Any]) -> None:
                 if ps.synthesis:
                     syn = ps.synthesis
                     r_prose, r_ref = format_memo_prose(syn.recommendation or "", [])
-                    st.markdown(f"**Recommendation:** {r_prose}")
+                    st.markdown(
+                        f"**Recommendation:** {streamlit_prose_display(r_prose)}"
+                    )
                     st.caption(
                         f"Confidence: {syn.recommendation_confidence:.0%}"
                     )
@@ -344,7 +350,7 @@ def _render_compare_results(payload: Dict[str, Any]) -> None:
                     es_p, es_r = format_memo_prose(
                         syn.executive_summary or "", es_f
                     )
-                    st.markdown(es_p or "_No summary_")
+                    st.markdown(streamlit_prose_display(es_p) or "_No summary_")
                     if es_r:
                         for i, u in enumerate(es_r, start=1):
                             st.caption(f"[{i}] {u}")

@@ -17,8 +17,27 @@ _MD_LINK = re.compile(r"\[([^\]]*)\]\((https?://[^)]+)\)", re.I)
 _URL_BRACKET = re.compile(r"\[(https?://[^\]\s]+)\]", re.I)
 
 
-def _latin1_safe(text: str) -> str:
-    return text.encode("latin-1", "replace").decode("latin-1")
+def _pdf_ascii(text: str) -> str:
+    """
+    FPDF core fonts are Latin-1. Unicode dashes/quotes become '?' with naive encode;
+    map common characters to ASCII first.
+    """
+    if not text:
+        return ""
+    t = (
+        text.replace("\u2014", "-")
+        .replace("\u2013", "-")
+        .replace("\u2012", "-")
+        .replace("\u2011", "-")
+        .replace("\u00a0", " ")
+        .replace("\u2026", "...")
+        .replace("\u2018", "'")
+        .replace("\u2019", "'")
+        .replace("\u201c", '"')
+        .replace("\u201d", '"')
+        .replace("\u00b7", " ")
+    )
+    return t.encode("latin-1", "replace").decode("latin-1")
 
 
 def _normalize_line_spaces(text: str) -> str:
@@ -58,6 +77,22 @@ def format_memo_prose(
     return _prose_and_refs(body, model_footnotes or [])
 
 
+_FOOTNOTE_BRACKET = re.compile(r"\[(\d+)\]")
+
+
+def streamlit_prose_display(prose: str) -> str:
+    """
+    Streamlit Markdown treats [1] like a link reference (odd color). Use superscript
+    digits so footnote markers render as plain text.
+    """
+    sup = "⁰¹²³⁴⁵⁶⁷⁸⁹"
+
+    def to_sup(m: re.Match) -> str:
+        return "".join(sup[int(d)] for d in m.group(1))
+
+    return _FOOTNOTE_BRACKET.sub(to_sup, prose)
+
+
 def _soft_wrap(text: str, width: int = 92) -> str:
     parts: list[str] = []
     for word in text.split():
@@ -69,7 +104,7 @@ def _soft_wrap(text: str, width: int = 92) -> str:
 
 
 def _multicell_block(pdf: FPDF, line_height: float, text: str) -> None:
-    txt = _latin1_safe(_soft_wrap(text.strip()))
+    txt = _pdf_ascii(_soft_wrap(text.strip()))
     if not txt:
         return
     pdf.set_x(pdf.l_margin)
@@ -85,7 +120,7 @@ def _multicell_block(pdf: FPDF, line_height: float, text: str) -> None:
 
 def _cell_full(pdf: FPDF, h: float, text: str) -> None:
     pdf.set_x(pdf.l_margin)
-    t = _latin1_safe(text)
+    t = _pdf_ascii(text)
     pdf.cell(
         pdf.epw,
         h,
@@ -99,9 +134,9 @@ def _cell_full(pdf: FPDF, h: float, text: str) -> None:
 def _write_references(pdf: FPDF, heading: str, urls: List[str]) -> None:
     if not urls:
         return
-    pdf.ln(1)
-    pdf.set_font("helvetica", "B", 9)
-    _cell_full(pdf, 5, heading)
+    pdf.ln(0.5)
+    pdf.set_font("helvetica", "B", 8)
+    _cell_full(pdf, 4, heading)
     pdf.set_font("helvetica", "", 8)
     for i, u in enumerate(urls, start=1):
         _multicell_block(pdf, 3.8, f"[{i}] {u}")
@@ -111,10 +146,10 @@ def _section_block(
     pdf: FPDF,
     sec: MemoSection,
 ) -> None:
-    pdf.set_font("helvetica", "B", 11)
+    pdf.set_font("helvetica", "B", 10)
     _cell_full(
         pdf,
-        7,
+        6,
         f"{sec.title} (confidence {sec.confidence:.0%})",
     )
     pdf.set_font("helvetica", "", 10)
@@ -125,7 +160,7 @@ def _section_block(
         if line.strip():
             _multicell_block(pdf, 5, line)
     _write_references(pdf, "Sources", refs)
-    pdf.ln(2)
+    pdf.ln(1)
 
 
 def _build_fpdf(
@@ -134,51 +169,38 @@ def _build_fpdf(
     dimension_scores: Optional[Dict[str, int]] = None,
 ) -> FPDF:
     pdf = FPDF()
-    pdf.set_margins(left=14, top=14, right=14)
+    pdf.set_margins(left=12, top=10, right=12)
     pdf.add_page()
-    pdf.set_auto_page_break(auto=True, margin=16)
+    pdf.set_auto_page_break(auto=True, margin=14)
 
-    pdf.set_font("helvetica", "B", 15)
-    _cell_full(pdf, 9, f"Investment memo — {startup_name}")
-    pdf.set_draw_color(180, 180, 180)
-    y = pdf.get_y()
-    pdf.line(pdf.l_margin, y, pdf.w - pdf.r_margin, y)
-    pdf.ln(3)
-
-    pdf.set_font("helvetica", "", 9)
-    pdf.set_text_color(80, 80, 80)
-    _cell_full(
-        pdf,
-        5,
-        "Confidential draft | Search, analysis, fact-check, synthesis pipeline",
-    )
-    pdf.set_text_color(0, 0, 0)
-    pdf.ln(2)
+    pdf.set_font("helvetica", "B", 14)
+    _cell_full(pdf, 8, f"Investment memo: {startup_name}")
+    pdf.ln(1)
 
     if dimension_scores:
-        pdf.set_font("helvetica", "B", 11)
-        _cell_full(pdf, 7, "Dimension scores (0–10)")
+        pdf.set_font("helvetica", "B", 10)
+        _cell_full(pdf, 6, "Dimension scores (0-10)")
         pdf.set_font("helvetica", "", 10)
         for k, v in dimension_scores.items():
-            _cell_full(pdf, 5.5, f"{k.replace('_', ' ').title()}: {v}/10")
-        pdf.ln(2)
+            _cell_full(pdf, 5, f"{k.replace('_', ' ').title()}: {v}/10")
+        pdf.ln(1)
 
     es_fn = getattr(synthesis, "executive_summary_footnotes", None) or []
-    pdf.set_font("helvetica", "B", 12)
-    _cell_full(pdf, 7, "Executive summary")
+    pdf.set_font("helvetica", "B", 11)
+    _cell_full(pdf, 6, "Executive summary")
     pdf.set_font("helvetica", "", 10)
     es_body, es_refs = _prose_and_refs(synthesis.executive_summary or "", es_fn)
     for line in es_body.split("\n"):
         if line.strip():
             _multicell_block(pdf, 5.2, line)
     _write_references(pdf, "Sources", es_refs)
-    pdf.ln(3)
+    pdf.ln(1)
 
     for sec in synthesis.sections:
         _section_block(pdf, sec)
 
     pdf.set_font("helvetica", "B", 11)
-    _cell_full(pdf, 7, "Recommendation")
+    _cell_full(pdf, 6, "Recommendation")
     pdf.set_font("helvetica", "", 10)
     rec = synthesis.recommendation or ""
     rec_clean, rec_refs = _prose_and_refs(
