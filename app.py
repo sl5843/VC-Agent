@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import base64
+import pickle
 from typing import Any, Callable, Dict, List, Optional
 
 import streamlit as st
@@ -31,9 +33,12 @@ except Exception as e:
     st.error(f"Configuration error: {e}")
     st.stop()
 
-SS_SINGLE_STATE = "vc_single_pipeline_state"
+# Raw objects in session_state are often lost on rerun (especially on Streamlit Cloud
+# after JSON round-trips). Persist pipeline + PDF as base64 so "Generate PDF" keeps results.
+SS_SINGLE_PICKLE_B64 = "vc_single_pipeline_pickle_b64"
+SS_SINGLE_STATE_LEGACY = "vc_single_pipeline_state"
 SS_COMPARE = "vc_compare_payload"
-PDF_KEY_PREFIX = "vc_pdf_bytes_"
+PDF_KEY_PREFIX = "vc_pdf_b64_"
 
 
 def _company_slug(name: str) -> str:
@@ -43,8 +48,39 @@ def _company_slug(name: str) -> str:
 
 def _clear_pdf_keys() -> None:
     for k in list(st.session_state.keys()):
-        if isinstance(k, str) and k.startswith(PDF_KEY_PREFIX):
+        if isinstance(k, str) and (
+            k.startswith(PDF_KEY_PREFIX) or k.startswith("vc_pdf_bytes_")
+        ):
             del st.session_state[k]
+
+
+def _persist_pipeline_state(state: PipelineState) -> None:
+    st.session_state[SS_SINGLE_PICKLE_B64] = base64.b64encode(
+        pickle.dumps(state, protocol=pickle.HIGHEST_PROTOCOL)
+    ).decode("ascii")
+
+
+def _load_pipeline_state() -> Optional[PipelineState]:
+    raw = st.session_state.get(SS_SINGLE_PICKLE_B64)
+    if raw:
+        try:
+            return pickle.loads(base64.b64decode(raw.encode("ascii")))
+        except Exception:
+            st.session_state.pop(SS_SINGLE_PICKLE_B64, None)
+    legacy = st.session_state.pop(SS_SINGLE_STATE_LEGACY, None)
+    if legacy is not None:
+        try:
+            _persist_pipeline_state(legacy)
+        except Exception:
+            pass
+        return legacy
+    return None
+
+
+def _clear_single_pipeline() -> None:
+    st.session_state.pop(SS_SINGLE_PICKLE_B64, None)
+    st.session_state.pop(SS_SINGLE_STATE_LEGACY, None)
+    _clear_pdf_keys()
 
 
 FULL_PIPELINE_STEPS: Dict[str, str] = {
@@ -112,7 +148,19 @@ def _render_single_company_results(state: PipelineState) -> None:
         )
 
     slug = _company_slug(state.company_name)
-    pdf_session_key = f"{PDF_KEY_PREFIX}{slug}"
+    def _store_pdf_bytes(data: bytes) -> None:
+        st.session_state[f"{PDF_KEY_PREFIX}{slug}"] = base64.b64encode(data).decode(
+            "ascii"
+        )
+
+    def _read_pdf_bytes() -> Optional[bytes]:
+        b64 = st.session_state.get(f"{PDF_KEY_PREFIX}{slug}")
+        if not b64:
+            return None
+        try:
+            return base64.b64decode(b64.encode("ascii"))
+        except Exception:
+            return None
 
     # PDF must live *above* tabs: every widget click reruns the app and Streamlit
     # resets the active tab to the first one — a download button only in a later
@@ -133,16 +181,18 @@ def _render_single_company_results(state: PipelineState) -> None:
         if gen_clicked:
             with st.spinner("Building PDF…"):
                 try:
-                    st.session_state[pdf_session_key] = build_memo_pdf_bytes(
-                        state.company_name,
-                        state.synthesis,
-                        state.analysis.dimension_scores,
+                    _store_pdf_bytes(
+                        build_memo_pdf_bytes(
+                            state.company_name,
+                            state.synthesis,
+                            state.analysis.dimension_scores,
+                        )
                     )
                     st.success("PDF ready — download below.")
                 except Exception as e:
                     st.error(f"Could not build PDF: {e}")
 
-        pdf_blob = st.session_state.get(pdf_session_key)
+        pdf_blob = _read_pdf_bytes()
         if pdf_blob:
             safe_fn = (
                 "".join(
@@ -302,18 +352,24 @@ mode = st.radio(
         "Compare companies",
     ],
     horizontal=True,
+    key="vc_mode_radio",
 )
 st.markdown("---")
 
 if mode == "Single company (full pipeline)":
     c1, c2 = st.columns(2)
     with c1:
-        startup_name = st.text_input("Company name", placeholder="e.g. Northspyre")
+        startup_name = st.text_input(
+            "Company name",
+            placeholder="e.g. Northspyre",
+            key="vc_single_company_name",
+        )
     with c2:
         startup_description = st.text_area(
             "Brief description (optional)",
             placeholder="e.g. AI platform for real estate developers",
             height=100,
+            key="vc_single_company_desc",
         )
 
     b1, b2 = st.columns([3, 1])
@@ -323,8 +379,7 @@ if mode == "Single company (full pipeline)":
         )
     with b2:
         if st.button("Clear results", use_container_width=True):
-            st.session_state.pop(SS_SINGLE_STATE, None)
-            _clear_pdf_keys()
+            _clear_single_pipeline()
             st.rerun()
 
     if run_clicked:
@@ -345,7 +400,7 @@ if mode == "Single company (full pipeline)":
                         startup_description,
                         log=lambda m: _status_log(status, m),
                     )
-                st.session_state[SS_SINGLE_STATE] = done
+                _persist_pipeline_state(done)
                 _clear_pdf_keys()
             except Exception as err:
                 st.error(
@@ -354,7 +409,7 @@ if mode == "Single company (full pipeline)":
                 )
                 st.exception(err)
 
-    saved = st.session_state.get(SS_SINGLE_STATE)
+    saved = _load_pipeline_state()
     if saved is not None:
         st.success(f"Showing results for **{saved.company_name}**.")
         if (startup_name or "").strip() and startup_name.strip() != saved.company_name:
