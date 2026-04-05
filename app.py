@@ -168,16 +168,10 @@ def _render_single_company_results(state: PipelineState) -> None:
         except Exception:
             return None
 
-    # PDF must live *above* tabs: every widget click reruns the app and Streamlit
-    # resets the active tab to the first one — a download button only in a later
-    # tab looked like "Generate PDF does nothing" because users stayed on tab 1.
+    # PDF block is above tabs so download stays on-screen after reruns.
     if state.synthesis and state.analysis:
         st.markdown("---")
         st.subheader("Export PDF")
-        st.caption(
-            "Use this section first — it stays visible. "
-            "(Buttons inside later tabs are easy to miss after Streamlit jumps back to tab 1.)"
-        )
         gen_clicked = st.button(
             "Generate PDF",
             type="secondary",
