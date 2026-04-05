@@ -30,6 +30,109 @@ def _radial_r_values(
     return out
 
 
+def _scored_arc_runs(scored: List[bool]) -> List[List[int]]:
+    """
+    Group dimension indices that are contiguous on the polar circle (wrapping at n-1 -> 0).
+    Example: scored at market, traction and competition..risk merges into one arc 3,4,5,0,1 when team is missing.
+    """
+    n = len(scored)
+    s = sorted(i for i in range(n) if scored[i])
+    if not s:
+        return []
+    if len(s) == n:
+        return [list(range(n))]
+    chunks: List[List[int]] = []
+    chunk = [s[0]]
+    for k in range(1, len(s)):
+        if s[k] - s[k - 1] == 1:
+            chunk.append(s[k])
+        else:
+            chunks.append(chunk)
+            chunk = [s[k]]
+    chunks.append(chunk)
+    if len(chunks) >= 2 and chunks[0][0] == 0 and chunks[-1][-1] == n - 1:
+        chunks = [chunks[-1] + chunks[0]] + chunks[1:-1]
+    return chunks
+
+
+def _hex_to_fill_rgba(hex_color: str, alpha: float = 0.35) -> str:
+    h = hex_color.lstrip("#")
+    if len(h) != 6:
+        return f"rgba(102, 126, 234,{alpha})"
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return f"rgba({r},{g},{b},{alpha})"
+
+
+def _add_radar_traces(
+    fig: go.Figure,
+    labels: List[str],
+    values: List[float],
+    line_color: str,
+    fillcolor: str,
+    name: str,
+    *,
+    show_legend: bool = True,
+) -> bool:
+    """
+    Add filled wedges for each contiguous scored arc, then outline+markers.
+    Plotly cannot fill across NaN in one trace; NaN breaks toself and drops wedges
+    between valid neighbors (e.g. market size vs traction when team is missing).
+    Returns True if any dimension was unscored.
+    """
+    n = len(labels)
+    scored = [not math.isnan(values[i]) for i in range(n)]
+    if not any(scored):
+        return False
+    runs = _scored_arc_runs(scored)
+    has_missing = not all(scored)
+
+    for run in runs:
+        if len(run) < 2:
+            continue
+        thetas = [labels[i] for i in run]
+        rs = [values[i] for i in run]
+        fig.add_trace(
+            go.Scatterpolar(
+                r=rs + [0.0, 0.0],
+                theta=thetas + [thetas[-1], thetas[0]],
+                fill="toself",
+                fillcolor=fillcolor,
+                line=dict(width=0),
+                mode="lines",
+                hoverinfo="skip",
+                showlegend=False,
+            )
+        )
+
+    line_theta: List[Any] = []
+    line_r: List[Any] = []
+    for ri, run in enumerate(runs):
+        if ri > 0:
+            line_theta.append(None)
+            line_r.append(None)
+        if len(run) == 1:
+            line_theta.append(labels[run[0]])
+            line_r.append(values[run[0]])
+        else:
+            line_theta.extend(labels[i] for i in run)
+            line_r.extend(values[i] for i in run)
+
+    fig.add_trace(
+        go.Scatterpolar(
+            r=line_r,
+            theta=line_theta,
+            fill="none",
+            mode="lines+markers",
+            line=dict(color=line_color, width=2),
+            marker=dict(size=7, color=line_color),
+            connectgaps=False,
+            name=name,
+            showlegend=show_legend,
+        )
+    )
+    return has_missing
+
+
 def create_dimension_radar(
     dimension_scores: Dict[str, Optional[int]], company_name: str
 ) -> go.Figure:
@@ -54,21 +157,14 @@ def create_dimension_radar(
             height=420,
         )
         return fig
-    values_closed = values + [values[0]]
-    labels_closed = labels + [labels[0]]
-    has_missing = any(math.isnan(v) for v in values)
 
-    fig = go.Figure(
-        data=go.Scatterpolar(
-            r=values_closed,
-            theta=labels_closed,
-            fill="toself",
-            line_color="#667eea",
-            fillcolor="rgba(102, 126, 234, 0.35)",
-            connectgaps=False,
-            name=company_name,
-        )
+    fig = go.Figure()
+    line_color = "#667eea"
+    fillcolor = _hex_to_fill_rgba(line_color, 0.35)
+    has_missing = _add_radar_traces(
+        fig, labels, values, line_color, fillcolor, company_name, show_legend=False
     )
+
     layout_kw: Dict[str, Any] = dict(
         polar=dict(radialaxis=dict(visible=True, range=[0, 10])),
         showlegend=False,
@@ -79,7 +175,7 @@ def create_dimension_radar(
         layout_kw["margin"] = dict(l=48, r=48, t=56, b=72)
         layout_kw["annotations"] = [
             dict(
-                text="Gaps indicate dimensions that were not scored — insufficient evidence in retrieved sources (not a score of zero).",
+                text="Missing axis: not scored from sources (not zero). Shaded regions follow scored dimensions only.",
                 xref="paper",
                 yref="paper",
                 x=0.5,
@@ -168,26 +264,21 @@ def create_comparison_radar(
     fig = go.Figure()
     keys = [k for k, _ in DIMENSION_LABELS]
     labels = [lbl for _, lbl in DIMENSION_LABELS]
-    labels_closed = labels + [labels[0]]
     any_missing = False
 
     for i, (startup, scores) in enumerate(all_scores.items()):
         values = _radial_r_values(scores, keys)
-        if any(math.isnan(v) for v in values):
-            any_missing = True
-        values_closed = values + [values[0]]
         color = palette[i % len(palette)]
-        fig.add_trace(
-            go.Scatterpolar(
-                r=values_closed,
-                theta=labels_closed,
-                fill="toself",
-                name=startup,
-                line_color=color,
-                opacity=0.35,
-                connectgaps=False,
-            )
-        )
+        if _add_radar_traces(
+            fig,
+            labels,
+            values,
+            color,
+            _hex_to_fill_rgba(color, 0.35),
+            startup,
+            show_legend=True,
+        ):
+            any_missing = True
 
     layout_kw: Dict[str, Any] = dict(
         polar=dict(radialaxis=dict(visible=True, range=[0, 10])),
@@ -198,7 +289,7 @@ def create_comparison_radar(
         layout_kw["margin"] = dict(l=48, r=48, t=56, b=72)
         layout_kw["annotations"] = [
             dict(
-                text="Polygon gaps: that startup had no defensible score for that dimension given available sources.",
+                text="Missing axes: not scored from sources. Shaded regions follow scored dimensions only.",
                 xref="paper",
                 yref="paper",
                 x=0.5,
